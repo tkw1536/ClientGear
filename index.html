@@ -1,0 +1,32 @@
+<html>
+
+    <head>
+        <title>ClientGear Test</title>
+       <script src="js/libs/util.js"></script>
+        <script src="js/libs/base64.js"></script>
+        <script src="js/libs/websock.js"></script>  
+        <script src="js/ClientGear.js"></script> 
+
+    </head>
+
+    <body>
+         <script>
+        var ws = new Websock(); //Create Socket Connection
+
+        var client = new ClientGear.primitiveGear(ws); //Create a primitive decoder / encoder
+
+        //Lets set up an event handler
+        client.on("ECHO_RES", function(p){
+            alert(p);  
+        }); 
+
+        ws.on("open", function(){ //once we have a full connection
+            client.Transmitter.transmitPackage("ECHO_REQ", ["Hello! This should be alerted! "]); 
+        })
+
+        ws.open("ws://localhost:8080"); //open the socket connection
+
+        
+        </script>
+    </body>
+</html>

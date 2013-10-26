@@ -1,12 +1,320 @@
 ClientGear = (function(){
-	var self = function(){}; 
+
+	var self = {}
 
 
 	/*
-		a package representation
+		PrimitiveReceiver
+	*/
+	self.primitiveGear = function(socket){
+		var me = this; 
+
+		self.EventEmitter.apply(this);
+
+		this.socket = socket; //store the socket (Later: create object here)
+
+		this.Transmitter = new self.Transmitter(socket); 
+		this.Receiver = new self.Receiver(socket, function(pack){
+			me.emit("package", [pack]); 
+			me.emit(pack.getPackageTypeString(), pack.getArgs()); 
+		}); 
+	};
+
+	self.primitiveGear.send = function(type, args){
+		this.Transmitter.transmitPackage(type, args); 
+	}
+
+	/*
+		============
+		Client
+		============
+	*/
+
+	self.Client = function(socket){
+		//Initalise primtive & EventEmitter
+		this._primitive = new self.primitiveGear(socket);
+		self.EventEmitter.call(this, false);
+
+		this.init(); 
+	}
+
+	self.Client.prototype.init = function(){
+		//TODO: Listen for primitive packages
+		this.initCW(); 
+	}
+
+	self.Client.prototype.setOption = function(option, callback){
+
+	}
+
+	/*
+		============
+		Worker
+		============
+	*/
+
+	self.Worker = function(socket){
+		//Initalise primtive & EventEmitter
+		this._primitive = new self.primitiveGear(socket); 
+		self.EventEmitter.call(this, false);  
+
+		this.__jobs = {}; 
+
+		this.init(); 
+	}
+
+	self.Worker.prototype.init = function(){
+
+		this.initCW(); 
+	}
+
+	/*
+		============
+		Shared Client / Worker Code
+		============
+	*/
+
+	/*
+		Shared Initialisation
+	*/
+	self.Client.prototype.initCW = self.Worker.prototype.initCW = function(){
+		var me = this; 
+
+		this._primitive.on("ECHO_RES", function(payload){
+			me.emit("echo", [payload]); 
+		}); 
+
+		this._primitive.on("ERROR", function(code, string){
+			me.emit("error", [code, string]); 
+		}); 
+	}
+
+	/*
+		Sends an echo package. 
+	*/
+	self.Client.prototype.echo = self.Worker.prototype.echo = function(payload, callback){
+		var callback = (typeof callback == "function")?callback:function(){}; 
+
+		this.once("echo", function(pl){
+			callback.call(this, pl == payload); //echk if it suceeded and echoed the payload
+		}); 
+
+		this._primitive.send("ECHO_REQ", [payload]); //send the echo request
+	}
+
+
+	/*
+		=============
+		Client Job
+		(asked for a job)
+		=============
+	*/
+	self.Client.Job = function(Client){
+		this.uid = false; 
+
+		if(!Client instanceof self.Client){
+			throw new Error()
+		}
+		this.Client = Client; 
+	}
+
+	/*
+		get the status of a JOB. 
+	*/
+	self.Client.Job.prototype.getStatus = function(callback){
+		//send a status
+
+		var me = this; 
+
+		var callback = (typeof callback == "function")?callback:function(){}; 
+
+		var handle = this.Client._primitive.on("STATUS_RES", function(uid, knownStatus, runningStatus, completedNumerator, completedDeNumerator){
+			if(uid === me.uid){
+				me.Client._primitive.off(handle); 
+
+				callback(
+					self.Package.StringToByteInt(knownStatus) == 1, 
+					self.Package.StringToByteInt(runningStatus) == 1, 
+					self.Package.StringToByteInt(completedNumerator), //0 .. 255
+					self.Package.StringToByteInt(completedDeNumerator)
+				); 
+			}
+		});
+	}
+
+
+
+	/*
+		=============
+		EVENT EMITTER
+		=============
+	*/
+	self.EventEmitter = function(error_evt){
+		this._handlers = {}; //handler
+		this._counter = 0; //id counter. 
+		this._emitErrors = (typeof error_evt == "boolean")?error_evt:false; 
+	}
+
+	self.EventEmitter.prototype.on = function(evt, handler){
+		var count = this._counter++; 
+		this._handlers[evt] = this._handlers[evt] || []; 
+		this._handlers[evt].push([count, handler]); 
+		return count; 
+	}
+
+	self.EventEmitter.prototype.once = function(evt, handler){
+		var me = this; 
+
+		var handle = this.on(evt, function(){
+			me.off(handle); 
+			try{
+				handler.apply(this, arguments); 
+			} catch(e){
+				if(evt != "error" && me._emitErrors){
+					me.emit("error", [e, evt, handler]); 
+				}
+			}
+		})
+	}
+
+	self.EventEmitter.prototype.emit = function(evt, args){
+		var me = this; 
+
+		(me._handlers[evt] || []).map(function(h){
+			try{
+				h[1].apply(me, args); 
+			} catch(e){
+				console.log(e.message); 
+				if(evt != "error" && me._emitErrors){
+					me.emit("error", [e, evt, h]); 
+				}
+			}
+		}); 
+	}
+
+	self.EventEmitter.prototype.off = function(id){
+		if(typeof id == "string"){
+			try{
+				delete this._handlers[id]; 
+			} catch(e){}
+		} else {
+			for(var key in this._handlers){
+				this._handlers[key] = this._handlers[key].filter(function(e){
+					return (e.indexOf(id) == -1); 
+				})
+			}
+		}
+	}
+
+	/*
+		=============
+		Transmitter
+		=============
+	*/
+	self.Transmitter = function(socket){
+		this.socket = socket; 
+	}
+
+	self.Transmitter.prototype.transmitPackage = function(method, args){
+		var pack = new self.Package("req", method, args); //send a request
+		this.socket.send(pack.toByteArray()); //send the package
+	}
+
+	/*
+		=============
+		Receiver
+		=============
+	*/
+	self.Receiver = function(socket, onPackage){
+		var me = this; 
+
+		this.socket = socket; 	
+		this.socket.on("message", function(){
+			me.doReceive();	
+		})
+		this.onPackage = onPackage; //what to do when we get a package
+		this.requests = []; 
+		this.cache = []; 
+		this.receiving = false; 
+		this.packaging = false; 
+	}
+
+	self.Receiver.prototype.doReceive = function(){
+		var me = this; 
+
+		if(this.receiving){
+			return; 
+		}
+
+		this.receiving = true; 
+
+		//add bytes to the cache
+		while(this.socket.rQlen() != 0){
+			this.cache.push(this.socket.rQshift8()); 
+		}
+
+		
+
+		//preocess requests
+		while(this.requests.length > 0){
+			if(this.cache.length >= this.requests[0][0]){
+				var req = this.requests.pop(); 
+				req[1].call(this, this.cache.splice(0, req[0]))
+			} else {
+				break; 
+			}
+		}
+
+		
+
+		//we will add new packages now if they are long enough
+		
+		if(this.cache.length>=12){ //package header received
+			if(!this.packaging){
+				this.packaging = true; 
+				var pack = new self.Package(function(b, next){
+					me.requestBytes(b, next); 
+				}, function(){
+					me.onPackage(pack); //package is done
+					me.packaging = false; 
+				})
+			}
+			
+		}
+
+		this.receiving = false; //stop receiving
+
+		if(this.requests.length > 0){
+			//we have more stuff to do
+			setTimeout(function(){
+				me.doReceive(); 
+			}, 100); 
+		}
+
+	}
+
+
+	self.Receiver.prototype.requestBytes = function(num, callback){
+		//request i bytes from the callback
+		//call callback with bytes once done
+		this.requests.push([num, callback]); 
+		this.doReceive(); //receive if you are not yet doing stuff
+	}
+
+	/*
+		=============
+		Package
+		=============
+	*/
+
+
+	/*
+		a package, a package representation. 
 	*/
 	self.Package = function(desc, method, args){
 		if(arguments.length == 1 || arguments.length == 2){
+			var me = this; 
+
 			if(typeof desc == "string"){
 				//make desc a bin array
 				var oldDesc = desc; 
@@ -25,10 +333,10 @@ ClientGear = (function(){
 			}
 
 			self.Package.decode(desc, function(decoded){
-				this.__packageReqRes = decoded.reqres; //string "req" or "res"
-				this.__packageType = decoded.package_type; //int
-				this.__args = decoded.args; //string args
-				this.__bin = decoded //byte array
+				me.__packageReqRes = decoded.reqres; //string "req" or "res"
+				me.__packageType = decoded.package_type; //int
+				me.__args = decoded.args; //string args
+				me.__bin = decoded; //byte array
 
 				if(typeof method == "function"){
 					method.call(this, this); 
@@ -101,7 +409,7 @@ ClientGear = (function(){
 					bytes(res_length, function(ARGS_BYTES){ //lets get the bytes
 						var argString = String.fromCharCode.apply(String, ARGS_BYTES); 
 						if(res_length != 0){
-							decoded.args = argString.split("\0"); 
+							decoded.args = argString.split("\0").slice(0); 
 						}
 						cb(decoded); 
 					});
@@ -160,6 +468,8 @@ ClientGear = (function(){
 			Package.push(arg_bin[i]); 
 		}
 
+		console.log(Package); 
+
 		return Package; 
 
 	}
@@ -186,6 +496,28 @@ ClientGear = (function(){
 		}
 
 		return bytes; 
+	}
+
+	self.Package.StringToByteArray = function(str){
+		var res=[]; 
+
+		for(var i=0;i<str.length;i++){
+			res.push(str.charCodeAt(i)); 
+		}
+
+		return res; 
+	}
+
+	
+
+	self.Package.StringToByteInt = function(str){
+		var res=0; 
+
+		for(var i=0;i<str.length;i++){
+			res += str.charCodeAt(i) * (1 << i); 
+		}
+
+		return res; 
 	}
 
 	self.Package.intToBytes = function(num){
@@ -277,6 +609,15 @@ ClientGear = (function(){
 		}
 		return ""; 
 	}
+
+
+	/*
+		Inheritance
+	*/
+	self.Client.prototype.on = self.Worker.prototype.on = self.primitiveGear.prototype.on = self.EventEmitter.prototype.on; 
+	self.Client.prototype.once = self.Worker.prototype.once = self.primitiveGear.prototype.once = self.EventEmitter.prototype.once; 
+	self.Client.prototype.off = self.Worker.prototype.off = self.primitiveGear.prototype.off = self.EventEmitter.prototype.off; 
+	self.Client.prototype.emit = self.Worker.prototype.emit = self.primitiveGear.prototype.emit = self.EventEmitter.prototype.emit; 
 
 	return self;
 })(); 
