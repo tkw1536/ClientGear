@@ -2,6 +2,33 @@ ClientGear = (function(){
 
 	var self = {}
 
+	/*
+		Wrappers
+	*/
+
+	self.createWorker = function(url, name, callback){
+		//create a worker connecting to websocket url.  
+		var callback = (typeof callback == "function")?callback:function(){};
+		var socket = new Websock();
+		socket.on("open", function(){
+			var worker = new self.Worker(socket, name); 
+			callback(worker); 
+		});
+		socket.open(url); 
+		return socket; 
+	};
+
+	self.createClient = function(url, callback){
+		var callback = (typeof callback == "function")?callback:function(){};
+		var socket = new Websock();
+		socket.on("open", function(){
+			var client = new self.Client(socket); 
+			callback(client); 
+		});
+		socket.open(url); 
+		return socket; 
+	}
+
 
 	/*
 		PrimitiveReceiver
@@ -43,8 +70,36 @@ ClientGear = (function(){
 		this.initCW(); 
 	}
 
-	self.Client.prototype.setOption = function(option, callback){
+	self.Client.prototype.createJob = function(type, data, priority){
+		return new self.Client.Job(this, type, data, priority); 
+	}
 
+	self.Client.prototype.setOption = function(option, callback){
+		var callback = (typeof callback == "function")?callback:function(){};
+
+		var me = this; 
+
+		if(["exceptions"].indexOf(option) == -1){
+			callback(false, "Unknown Option");  
+		} else {
+			var unregister = function(){
+				me._primitive.off(on_error);
+				me._primitive.off(on_ok); 
+			}
+
+			var on_error = me._primitive.on("ERROR", function(id, msg){
+				unregister(); 
+				callback(false, msg); 
+			});
+
+			var on_ok = me._primitive.on("OPTION_RES", function(){
+				unregister(); 
+				me.emit("set_option", option); 
+				callback(true, option); 
+			});
+
+			me._primitive.send("OPTION_REQ", [option]); 
+		}
 	}
 
 	/*
@@ -53,20 +108,121 @@ ClientGear = (function(){
 		============
 	*/
 
-	self.Worker = function(socket){
+	self.Worker = function(socket, name){
 		//Initalise primtive & EventEmitter
 		this._primitive = new self.primitiveGear(socket); 
 		self.EventEmitter.call(this, false);  
 
-		this.__jobs = {}; 
+		this._jobs = {};
+
+		this._name = name; 
 
 		this.init(); 
 	}
 
 	self.Worker.prototype.init = function(){
-
 		this.initCW(); 
+
+		this.setName(this._name); //set this name
 	}
+
+	self.Worker.prototype.setName = function(name){
+		this._primitive.send("SET_CLIENT_ID", name); 
+		this._name = name; 
+	}
+
+	self.Worker.prototype.getName = function(){
+		return this._name; 
+	}
+
+	self.Worker.prototype.canDo = function(func){
+		return this._jobs.hasOwnProperty(func); 
+	}
+
+	self.Worker.prototype.registerFunction = function(func, handler, timeout){
+		if(typeof timeout == "number" && timeout > 0){
+			 
+			this._primitive.send("CAN_DO_TIMEOUT", 
+				[
+					func, 
+					self.Package.intToBEBytes(timeout)
+				]
+			);
+
+		} else {
+			this._primitive.send("CAN_DO", [func]);
+		}
+		this._jobs[func] = handler; 
+	}
+
+	self.Worker.prototype.deRegisterFunction = function(func){
+		this._primitive.send("CANT_DO", [func]); 
+	}
+
+	self.Worker.prototype.unRegisterAll = function(func){
+		this._primitive.send("RESET_ABILITIES", []); 
+	}
+
+	self.Worker.prototype.work = function(){
+		var me = this; 
+		var no_job = this._primitive.once("NO_JOB", function(){
+			me.emit("pause", []); 
+			this._primitive.off(job_assign); 
+			this._primitive.once("NOOP", function(){
+				me.emit("resume", []); 
+				me.work(); 
+			}); 
+			this._primitive.send("PRE_SLEEP", []); 
+		});
+		var job_assign = this._primitive.once("JOB_ASSIGN_UNIQ", function(handle, func, uid){
+			this._primitive.off(no_job); 
+
+			
+			var workjob = new self.Worker.Job(this, handle, func, uid); 
+			this.emit("accepted", workjob); 
+			workjob.init(); //initialise the work job
+		}); 
+	}
+
+	self.Worker.Job = function(Worker, handle, func, uid){
+		this._Worker = Worker; 
+		this.handle = handle; 
+		this._func = func; 
+		this.uid = uid; 
+		//Do stuff
+	}
+
+	self.Worker.Job.prototype.init = function(){
+		this._Worker._jobs[this._func].call(this._Worker, this._data, this); 
+	}
+
+	self.Worker.Job.prototype.fail = function(){
+		this._Worker._primitive.send("WORK_FAIL", [this.handle]); 
+	}
+
+	self.Worker.Job.prototype.exception = function(msg){
+		this._Worker._primitive.send("WORK_EXCEPTION", [this.handle, msg]); 
+	}
+
+	self.Worker.Job.prototype.warn = function(msg){
+		this._Worker._primitive.send("WORK_WARNING", [this.handle, msg]); 
+	}
+
+	self.Worker.Job.prototype.send = function(data){
+		this._Worker._primitive.send("WORK_DATA", [this.handle, data]); 
+	}
+
+	self.Worker.Job.prototype.status = function(num, denum){
+		this._Worker._primitive.send("WORK_STATUS", [this.handle, 
+			self.Package.intToBEBytes(num), 
+			self.Package.intToBEBytes(denum)
+		]); 
+	}
+
+	self.Worker.Job.prototype.complete = function(data){
+		this._Worker._primitive.send("WORK_COMPLETE", [this.handle, data]); 
+	}
+
 
 	/*
 		============
@@ -109,14 +265,186 @@ ClientGear = (function(){
 		(asked for a job)
 		=============
 	*/
-	self.Client.Job = function(Client){
+	self.Client.Job = function(Client, type, data, priority){
 		this.uid = false; 
+		this._handlers = []; 
+		this.submitted = false;
+		this.finished = false; 
 
 		if(!Client instanceof self.Client){
 			throw new Error()
 		}
 		this.Client = Client; 
+
+		this._type = type; 
+		this._data = data; 
+		this._priority = priority;
+
+		this.init(); 
 	}
+
+	self.Client.Job.prototype.init = function(){
+		
+		var me = this; 
+		var primitive = this.Client._primitive;
+
+		me._handlers.push(primitive.on("WORK_DATA", function(uuid, data){
+			if(uuid == me.uid){
+				me.emit("data", [data]); 
+			}
+		})); 
+
+		me._handlers.push(primitive.on("WORK_WARNING", function(uid, data){
+			if(uuid == me.uid){
+				me.emit("warning", [data]); 
+			}
+		}));
+
+		me._handlers.push(primitive.on("WORK_STATUS", function(uid, num, denum){
+			if(uuid == me.uid){
+				me.emit("status", 
+					self.Package.StringToByteInt(num), 
+					self.Package.StringToByteInt(denum)); 
+			}
+		}));
+
+		me._handlers.push(primitive.on("WORK_COMPLETE", function(uid, data){
+			if(uuid == me.uid){
+				me.emit("complete", [data]); 
+			}
+		}));
+
+		me._handlers.push(primitive.on("WORK_EXCEPTION", function(uid, msg){
+			if(uuid == uid){
+				me.emit("fail", [msg]); //Failed with message
+			}
+		}));
+
+		me._handlers.push(primitive.on("WORK_FAIL", function(uid){
+			if(uuid == me.uid){
+				me.emit("fail"); //Failed without message
+			}
+		}));
+
+	}; 
+
+	self.Client.Job.prototype.submit = function(callback){
+
+		var type = this._type; 
+		var data = this._data; 
+		var priority = this._priority; 
+
+		priority = JOBPriorities[priority.toUpperCase()]; 
+
+		if(typeof priority == "undefined"){
+			return false; 
+		}
+
+		callback = (typeof callback == "function")?callback:function(){}; 
+
+		me.on("finish", callback)
+
+		//submit with given priority
+		if(this.submitted){
+			return false; 
+		} else {
+			this.submitted = true; 
+
+
+			me.Client._primitive.once("JOB_CREATED", function(uid){
+				me.uid = uid; //store the uid
+				me.emit("created", []); 
+			})
+
+			me.Client._primitive.send(priority, 
+				[
+					type, 
+					"job:"
+						+(Math.floor((Math.random()*100)+1)).toString()
+						+":"
+						+(new Date()).getTime().tpoString(), 
+					data
+				]
+			)
+
+			//register finish handlers
+			var unregister = function(){
+				me.off(on_finish); 
+				me.off(on_fail); 
+				me.abandon(); //remove all handlers
+			}
+
+			var on_finish = me.on("complete", function(data){
+				unregister(); 
+				me.emit("finish", [data, true]); 
+			}); 
+
+			var on_fail = me.on("fail", function(msg){
+				unregister(); 
+				me.emit("finish", [msg, false]); 
+			}); 
+
+
+		}
+		return true; 
+	};
+
+	self.Client.Job.prototype.submitBackground = function(){
+		var type = this._type; 
+		var data = this._data; 
+		var priority = this._priority; 
+
+		priority = JOBPriorities[priority.toUpperCase()]; 
+
+		if(typeof priority == "undefined"){
+			return false; 
+		}
+
+		callback = (typeof callback == "function")?callback:function(){}; 
+
+		me.on("finish", callback)
+
+		//submit with given priority
+		if(this.submitted){
+			return false; 
+		} else {
+			this.submitted = true; 
+
+
+			me.Client._primitive.once("JOB_CREATED", function(uid){
+				me.uid = uid; //store the uid
+				me.abandon(); //forget the job 
+			})
+
+			me.Client._primitive.send(priority+"_BG", 
+				[
+					type, 
+					"job:"
+						+(Math.floor((Math.random()*100)+1)).toString()
+						+":"
+						+(new Date()).getTime().tpoString(), 
+					data
+				]
+			)
+
+		}
+		return true; 
+	};
+
+	self.Client.Job.prototype.abandon = function(){
+		//abondon the job, forget it. 
+		//unregister event handlers
+		var me = this; 
+
+		this.finished = true; 
+		this.submitted = true; 
+
+		me._handlers.map(function(h){
+			me.Client._primitive.off(h);
+		});
+	}
+
+
 
 	/*
 		get the status of a JOB. 
@@ -141,6 +469,8 @@ ClientGear = (function(){
 			}
 		});
 	}
+
+
 
 
 
@@ -591,6 +921,12 @@ ClientGear = (function(){
 	    "SUBMIT_JOB_EPOCH": 36
 	};
 
+	var JOBPriorities = {
+		"NORMAL": "SUBMIT_JOB", 
+		"HIGH": "SUBMIT_JOB_HIGH",
+		"LOW": "SUBMIT_JOB_LOW"
+	};
+
 	/*
 		Converts a Package type string into an integer. 
 	*/
@@ -614,10 +950,10 @@ ClientGear = (function(){
 	/*
 		Inheritance
 	*/
-	self.Client.prototype.on = self.Worker.prototype.on = self.primitiveGear.prototype.on = self.EventEmitter.prototype.on; 
-	self.Client.prototype.once = self.Worker.prototype.once = self.primitiveGear.prototype.once = self.EventEmitter.prototype.once; 
-	self.Client.prototype.off = self.Worker.prototype.off = self.primitiveGear.prototype.off = self.EventEmitter.prototype.off; 
-	self.Client.prototype.emit = self.Worker.prototype.emit = self.primitiveGear.prototype.emit = self.EventEmitter.prototype.emit; 
+	self.Client.Job.prototype.on = self.Client.prototype.on = self.Worker.prototype.on = self.primitiveGear.prototype.on = self.EventEmitter.prototype.on; 
+	self.Client.Job.prototype.once = self.Client.prototype.once = self.Worker.prototype.once = self.primitiveGear.prototype.once = self.EventEmitter.prototype.once; 
+	self.Client.Job.prototype.off = self.Client.prototype.off = self.Worker.prototype.off = self.primitiveGear.prototype.off = self.EventEmitter.prototype.off; 
+	self.Client.Job.prototype.emit = self.Client.prototype.emit = self.Worker.prototype.emit = self.primitiveGear.prototype.emit = self.EventEmitter.prototype.emit; 
 
 	return self;
 })(); 

@@ -12,7 +12,7 @@ ClientGear is a Gearman Client fo the browser. Still under development.
 3) Load the client side libraries in the browser and start working!
 
 
-## Whats working
+## Primitive Packaging
 
 So far, primitive package encodeing and decoding works. Example: 
 
@@ -33,3 +33,8 @@ ws.open("ws://localhost:8080"); //open the socket connection
 client.send("ECHO_REQ", ["Hello! This should be alerted! "]); 
 // client.send(PACKAGE_NAME, ARGUMENTS) //sends a package to the server
 ```
+
+## TODO
+
+* Testing
+* API doc
