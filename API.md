@@ -1,6 +1,6 @@
 # API
 
-This file documents the basic API. It is not complete. 
+This file documents the basic API. It does not include parameters only used for debugging. It is not yet complete. 
 
 Note that you do not have to use any constructors (`new`` keyword), they are all created for you. 
 

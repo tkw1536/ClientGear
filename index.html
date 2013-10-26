@@ -6,27 +6,57 @@
         <script src="js/libs/base64.js"></script>
         <script src="js/libs/websock.js"></script>  
         <script src="js/ClientGear.js"></script> 
+        <script type="text/javascript">
+            function run_client(){
+                ClientGear.createClient("ws://localhost:8080", function(client){
+                    log(client, "Client"); 
 
-    </head>
+                    var job = client.createJob("reverse", "Hello World!"); 
+                    job.submit(function(res, err){
+                        if(!err){
+                            alert(res); 
+                        } else {
+                            console.log("ERROR: "+err); 
+                        }
+                    });
 
-    <body>
-         <script>
-        var ws = new Websock(); //Create Socket Connection
+                    window.client = client; 
+                    window.job = job; 
+                }, true); 
+            }
 
-        var client = new ClientGear.primitiveGear(ws); //Create a primitive decoder / encoder
+            function run_worker(){
+                ClientGear.createWorker("ws://localhost:8080", "jsworker", function(worker){
+                    log(worker, "Worker");
 
-        //Lets set up an event handler
-        client.on("ECHO_RES", function(p){
-            alert(p);  
-        }); 
+                    worker.registerFunction("reverse", function(s, job){
+                        console.log(s); 
+                        job.complete(s.split("").reverse().join("")); //complete the job
+                    }); 
 
-        ws.on("open", function(){ //once we have a full connection
-            client.Transmitter.transmitPackage("ECHO_REQ", ["Hello! This should be alerted! "]); 
-        })
+                    worker.work(); //start working
 
-        ws.open("ws://localhost:8080"); //open the socket connection
+                    window.worker = worker; 
+                }, true); 
+            }
 
-        
+            function log(e, msg){
+
+                console.log("We are: "+msg); 
+                e._primitive.on("package", function(pack){
+                    console.log("Incoming: "+pack.getPackageTypeString(), pack); 
+                });
+                e._primitive.on("package_out", function(pack){
+                    console.log("Outgoing: "+pack.getPackageTypeString(), pack); 
+                });
+
+                e.init(); 
+            }
         </script>
+    </head>
+    <body>
+        <button onclick="run_client(); return false; ">Client</button>Click to make a reverse request. <br/>
+        <button onclick="run_worker(); return false; ">Worker</button>Click to start a simple reverse worker!
     </body>
+
 </html>

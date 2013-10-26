@@ -6,23 +6,23 @@ ClientGear = (function(){
 		Wrappers
 	*/
 
-	self.createWorker = function(url, name, callback){
+	self.createWorker = function(url, name, callback, postponeInit){
 		//create a worker connecting to websocket url.  
 		var callback = (typeof callback == "function")?callback:function(){};
 		var socket = new Websock();
 		socket.on("open", function(){
-			var worker = new self.Worker(socket, name); 
+			var worker = new self.Worker(socket, name, postponeInit); 
 			callback(worker); 
 		});
 		socket.open(url); 
 		return socket; 
 	};
 
-	self.createClient = function(url, callback){
+	self.createClient = function(url, callback, postponeInit){
 		var callback = (typeof callback == "function")?callback:function(){};
 		var socket = new Websock();
 		socket.on("open", function(){
-			var client = new self.Client(socket); 
+			var client = new self.Client(socket, postponeInit); 
 			callback(client); 
 		});
 		socket.open(url); 
@@ -47,8 +47,9 @@ ClientGear = (function(){
 		}); 
 	};
 
-	self.primitiveGear.send = function(type, args){
-		this.Transmitter.transmitPackage(type, args); 
+	self.primitiveGear.prototype.send = function(type, args){
+		var pack = this.Transmitter.transmitPackage(type, args); 
+		this.emit("package_out", [pack]); 
 	}
 
 	/*
@@ -57,12 +58,14 @@ ClientGear = (function(){
 		============
 	*/
 
-	self.Client = function(socket){
+	self.Client = function(socket, postponeInit){
 		//Initalise primtive & EventEmitter
 		this._primitive = new self.primitiveGear(socket);
 		self.EventEmitter.call(this, false);
 
-		this.init(); 
+		if(postponeInit !== true){
+			this.init();
+		}
 	}
 
 	self.Client.prototype.init = function(){
@@ -108,7 +111,7 @@ ClientGear = (function(){
 		============
 	*/
 
-	self.Worker = function(socket, name){
+	self.Worker = function(socket, name, postponeInit){
 		//Initalise primtive & EventEmitter
 		this._primitive = new self.primitiveGear(socket); 
 		self.EventEmitter.call(this, false);  
@@ -117,7 +120,10 @@ ClientGear = (function(){
 
 		this._name = name; 
 
-		this.init(); 
+		if(postponeInit !== true){
+			this.init();
+		}
+		 
 	}
 
 	self.Worker.prototype.init = function(){
@@ -167,41 +173,51 @@ ClientGear = (function(){
 		var me = this; 
 		var no_job = this._primitive.once("NO_JOB", function(){
 			me.emit("pause", []); 
-			this._primitive.off(job_assign); 
-			this._primitive.once("NOOP", function(){
+			me._primitive.off(job_assign); 
+
+			me._primitive.once("NOOP", function(){
 				me.emit("resume", []); 
 				me.work(); 
 			}); 
-			this._primitive.send("PRE_SLEEP", []); 
-		});
-		var job_assign = this._primitive.once("JOB_ASSIGN_UNIQ", function(handle, func, uid){
-			this._primitive.off(no_job); 
 
+			me._primitive.send("PRE_SLEEP", []); 
+		});
+		var job_assign = this._primitive.once("JOB_ASSIGN_UNIQ", function(handle, func, uid, data){
+			me._primitive.off(no_job); 
 			
-			var workjob = new self.Worker.Job(this, handle, func, uid); 
-			this.emit("accepted", workjob); 
+			var workjob = new self.Worker.Job(me, handle, func, uid, data); 
+			me.emit("accepted", workjob); 
 			workjob.init(); //initialise the work job
 		}); 
+
+		this._primitive.send("GRAB_JOB_UNIQ", []); //get a job
 	}
 
-	self.Worker.Job = function(Worker, handle, func, uid){
+	self.Worker.Job = function(Worker, handle, func, uid,data){
 		this._Worker = Worker; 
 		this.handle = handle; 
 		this._func = func; 
+		this._data = data; 
 		this.uid = uid; 
-		//Do stuff
 	}
 
 	self.Worker.Job.prototype.init = function(){
-		this._Worker._jobs[this._func].call(this._Worker, this._data, this); 
+			var work_func = this._Worker._jobs[this._func]; 
+			work_func.apply(this._Worker, [this._data, this]); 
+	}
+
+	self.Worker.Job.prototype.finish = function(){
+		this._Worker.work(); 
 	}
 
 	self.Worker.Job.prototype.fail = function(){
 		this._Worker._primitive.send("WORK_FAIL", [this.handle]); 
+		this.finish(); 
 	}
 
 	self.Worker.Job.prototype.exception = function(msg){
 		this._Worker._primitive.send("WORK_EXCEPTION", [this.handle, msg]); 
+		this.finish(); 
 	}
 
 	self.Worker.Job.prototype.warn = function(msg){
@@ -221,6 +237,7 @@ ClientGear = (function(){
 
 	self.Worker.Job.prototype.complete = function(data){
 		this._Worker._primitive.send("WORK_COMPLETE", [this.handle, data]); 
+		this.finish(); 
 	}
 
 
@@ -272,13 +289,13 @@ ClientGear = (function(){
 		this.finished = false; 
 
 		if(!Client instanceof self.Client){
-			throw new Error()
+			throw new Error(); 
 		}
 		this.Client = Client; 
 
 		this._type = type; 
 		this._data = data; 
-		this._priority = priority;
+		this._priority = (typeof priority == "string")?priority:"NORMAL";
 
 		this.init(); 
 	}
@@ -288,20 +305,20 @@ ClientGear = (function(){
 		var me = this; 
 		var primitive = this.Client._primitive;
 
-		me._handlers.push(primitive.on("WORK_DATA", function(uuid, data){
-			if(uuid == me.uid){
+		me._handlers.push(primitive.on("WORK_DATA", function(uid, data){
+			if(uid == me.uid){
 				me.emit("data", [data]); 
 			}
 		})); 
 
 		me._handlers.push(primitive.on("WORK_WARNING", function(uid, data){
-			if(uuid == me.uid){
+			if(uid == me.uid){
 				me.emit("warning", [data]); 
 			}
 		}));
 
 		me._handlers.push(primitive.on("WORK_STATUS", function(uid, num, denum){
-			if(uuid == me.uid){
+			if(uid == me.uid){
 				me.emit("status", 
 					self.Package.StringToByteInt(num), 
 					self.Package.StringToByteInt(denum)); 
@@ -309,19 +326,20 @@ ClientGear = (function(){
 		}));
 
 		me._handlers.push(primitive.on("WORK_COMPLETE", function(uid, data){
-			if(uuid == me.uid){
+			if(uid == me.uid){
+				console.log(data); 
 				me.emit("complete", [data]); 
 			}
 		}));
 
 		me._handlers.push(primitive.on("WORK_EXCEPTION", function(uid, msg){
-			if(uuid == uid){
+			if(uid == uid){
 				me.emit("fail", [msg]); //Failed with message
 			}
 		}));
 
 		me._handlers.push(primitive.on("WORK_FAIL", function(uid){
-			if(uuid == me.uid){
+			if(uid == me.uid){
 				me.emit("fail"); //Failed without message
 			}
 		}));
@@ -329,6 +347,8 @@ ClientGear = (function(){
 	}; 
 
 	self.Client.Job.prototype.submit = function(callback){
+		var me = this; 
+
 
 		var type = this._type; 
 		var data = this._data; 
@@ -342,7 +362,7 @@ ClientGear = (function(){
 
 		callback = (typeof callback == "function")?callback:function(){}; 
 
-		me.on("finish", callback)
+		me.on("finish", callback); 
 
 		//submit with given priority
 		if(this.submitted){
@@ -362,7 +382,7 @@ ClientGear = (function(){
 					"job:"
 						+(Math.floor((Math.random()*100)+1)).toString()
 						+":"
-						+(new Date()).getTime().tpoString(), 
+						+(new Date()).getTime().toString(), 
 					data
 				]
 			)
@@ -383,8 +403,6 @@ ClientGear = (function(){
 				unregister(); 
 				me.emit("finish", [msg, false]); 
 			}); 
-
-
 		}
 		return true; 
 	};
@@ -504,7 +522,9 @@ ClientGear = (function(){
 					me.emit("error", [e, evt, handler]); 
 				}
 			}
-		})
+		});
+
+		return handle; 
 	}
 
 	self.EventEmitter.prototype.emit = function(evt, args){
@@ -514,7 +534,6 @@ ClientGear = (function(){
 			try{
 				h[1].apply(me, args); 
 			} catch(e){
-				console.log(e.message); 
 				if(evt != "error" && me._emitErrors){
 					me.emit("error", [e, evt, h]); 
 				}
@@ -548,6 +567,7 @@ ClientGear = (function(){
 	self.Transmitter.prototype.transmitPackage = function(method, args){
 		var pack = new self.Package("req", method, args); //send a request
 		this.socket.send(pack.toByteArray()); //send the package
+		return pack; 
 	}
 
 	/*
@@ -797,8 +817,6 @@ ClientGear = (function(){
 		for(var i=0;i<arg_bin.length;i++){
 			Package.push(arg_bin[i]); 
 		}
-
-		console.log(Package); 
 
 		return Package; 
 
