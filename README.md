@@ -13,6 +13,6 @@ ClientGear is a Gearman Client fo the browser. Still under development.
 
 ## TODO
 
-* API doc
+* Better examples
 * Better doc for requirements
 * License

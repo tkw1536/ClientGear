@@ -31,7 +31,7 @@ ClientGear = (function(){
 
 
 	/*
-		PrimitiveReceiver
+		primitiveGear
 	*/
 	self.primitiveGear = function(socket){
 		var me = this; 
@@ -69,7 +69,6 @@ ClientGear = (function(){
 	}
 
 	self.Client.prototype.init = function(){
-		//TODO: Listen for primitive packages
 		this.initCW(); 
 	}
 
@@ -104,177 +103,6 @@ ClientGear = (function(){
 			me._primitive.send("OPTION_REQ", [option]); 
 		}
 	}
-
-	/*
-		============
-		Worker
-		============
-	*/
-
-	self.Worker = function(socket, name, postponeInit){
-		//Initalise primtive & EventEmitter
-		this._primitive = new self.primitiveGear(socket); 
-		self.EventEmitter.call(this, false);  
-
-		this._jobs = {};
-
-		this._name = name; 
-
-		if(postponeInit !== true){
-			this.init();
-		}
-		 
-	}
-
-	self.Worker.prototype.init = function(){
-		this.initCW(); 
-
-		this.setName(this._name); //set this name
-	}
-
-	self.Worker.prototype.setName = function(name){
-		this._primitive.send("SET_CLIENT_ID", name); 
-		this._name = name; 
-	}
-
-	self.Worker.prototype.getName = function(){
-		return this._name; 
-	}
-
-	self.Worker.prototype.canDo = function(func){
-		return this._jobs.hasOwnProperty(func); 
-	}
-
-	self.Worker.prototype.registerFunction = function(func, handler, timeout){
-		if(typeof timeout == "number" && timeout > 0){
-			 
-			this._primitive.send("CAN_DO_TIMEOUT", 
-				[
-					func, 
-					self.Package.intToBEBytes(timeout)
-				]
-			);
-
-		} else {
-			this._primitive.send("CAN_DO", [func]);
-		}
-		this._jobs[func] = handler; 
-	}
-
-	self.Worker.prototype.deRegisterFunction = function(func){
-		this._primitive.send("CANT_DO", [func]); 
-	}
-
-	self.Worker.prototype.unRegisterAll = function(func){
-		this._primitive.send("RESET_ABILITIES", []); 
-	}
-
-	self.Worker.prototype.work = function(){
-		var me = this; 
-		var no_job = this._primitive.once("NO_JOB", function(){
-			me.emit("pause", []); 
-			me._primitive.off(job_assign); 
-
-			me._primitive.once("NOOP", function(){
-				me.emit("resume", []); 
-				me.work(); 
-			}); 
-
-			me._primitive.send("PRE_SLEEP", []); 
-		});
-		var job_assign = this._primitive.once("JOB_ASSIGN_UNIQ", function(handle, func, uid, data){
-			me._primitive.off(no_job); 
-			
-			var workjob = new self.Worker.Job(me, handle, func, uid, data); 
-			me.emit("accepted", workjob); 
-			workjob.init(); //initialise the work job
-		}); 
-
-		this._primitive.send("GRAB_JOB_UNIQ", []); //get a job
-	}
-
-	self.Worker.Job = function(Worker, handle, func, uid,data){
-		this._Worker = Worker; 
-		this.handle = handle; 
-		this._func = func; 
-		this._data = data; 
-		this.uid = uid; 
-	}
-
-	self.Worker.Job.prototype.init = function(){
-			var work_func = this._Worker._jobs[this._func]; 
-			work_func.apply(this._Worker, [this._data, this]); 
-	}
-
-	self.Worker.Job.prototype.finish = function(){
-		this._Worker.work(); 
-	}
-
-	self.Worker.Job.prototype.fail = function(){
-		this._Worker._primitive.send("WORK_FAIL", [this.handle]); 
-		this.finish(); 
-	}
-
-	self.Worker.Job.prototype.exception = function(msg){
-		this._Worker._primitive.send("WORK_EXCEPTION", [this.handle, msg]); 
-		this.finish(); 
-	}
-
-	self.Worker.Job.prototype.warn = function(msg){
-		this._Worker._primitive.send("WORK_WARNING", [this.handle, msg]); 
-	}
-
-	self.Worker.Job.prototype.send = function(data){
-		this._Worker._primitive.send("WORK_DATA", [this.handle, data]); 
-	}
-
-	self.Worker.Job.prototype.status = function(num, denum){
-		this._Worker._primitive.send("WORK_STATUS", [this.handle, 
-			self.Package.intToBEBytes(num), 
-			self.Package.intToBEBytes(denum)
-		]); 
-	}
-
-	self.Worker.Job.prototype.complete = function(data){
-		this._Worker._primitive.send("WORK_COMPLETE", [this.handle, data]); 
-		this.finish(); 
-	}
-
-
-	/*
-		============
-		Shared Client / Worker Code
-		============
-	*/
-
-	/*
-		Shared Initialisation
-	*/
-	self.Client.prototype.initCW = self.Worker.prototype.initCW = function(){
-		var me = this; 
-
-		this._primitive.on("ECHO_RES", function(payload){
-			me.emit("echo", [payload]); 
-		}); 
-
-		this._primitive.on("ERROR", function(code, string){
-			me.emit("error", [code, string]); 
-		}); 
-	}
-
-	/*
-		Sends an echo package. 
-	*/
-	self.Client.prototype.echo = self.Worker.prototype.echo = function(payload, callback){
-		var callback = (typeof callback == "function")?callback:function(){}; 
-
-		this.once("echo", function(pl){
-			callback.call(this, pl == payload); //echk if it suceeded and echoed the payload
-		}); 
-
-		this._primitive.send("ECHO_REQ", [payload]); //send the echo request
-	}
-
 
 	/*
 		=============
@@ -488,8 +316,199 @@ ClientGear = (function(){
 		});
 	}
 
+	/*
+		============
+		Worker
+		============
+	*/
+
+	self.Worker = function(socket, name, postponeInit){
+		//Initalise primtive & EventEmitter
+		this._primitive = new self.primitiveGear(socket); 
+		self.EventEmitter.call(this, false);  
+
+		this._jobs = {};
+
+		this._name = name; 
+
+		if(postponeInit !== true){
+			this.init();
+		}
+		 
+	}
+
+	self.Worker.prototype.init = function(){
+		this.initCW(); 
+
+		this.setName(this._name); //set this name
+	}
+
+	self.Worker.prototype.setName = function(name){
+		this._primitive.send("SET_CLIENT_ID", name); 
+		this._name = name; 
+	}
+
+	self.Worker.prototype.getName = function(){
+		return this._name; 
+	}
+
+	self.Worker.prototype.canDo = function(func){
+		return this._jobs.hasOwnProperty(func); 
+	}
+
+	self.Worker.prototype.registerFunction = function(func, handler, timeout){
+		if(typeof timeout == "number" && timeout > 0){
+			 
+			this._primitive.send("CAN_DO_TIMEOUT", 
+				[
+					func, 
+					self.Package.intToBEBytes(timeout)
+				]
+			);
+
+		} else {
+			this._primitive.send("CAN_DO", [func]);
+		}
+		this._jobs[func] = handler; 
+	}
+
+	self.Worker.prototype.deRegisterFunction = function(func){
+		this._primitive.send("CANT_DO", [func]); 
+	}
+
+	self.Worker.prototype.unRegisterAll = function(func){
+		this._primitive.send("RESET_ABILITIES", []); 
+	}
+
+	self.Worker.prototype.work = function(){
+		var me = this; 
+		var no_job = this._primitive.once("NO_JOB", function(){
+			me.emit("pause", []); 
+			me._primitive.off(job_assign); 
+
+			me._primitive.once("NOOP", function(){
+				me.emit("resume", []); 
+				me.work(); 
+			}); 
+
+			me._primitive.send("PRE_SLEEP", []); 
+		});
+		var job_assign = this._primitive.once("JOB_ASSIGN_UNIQ", function(handle, func, uid, data){
+			me._primitive.off(no_job); 
+			
+			var workjob = new self.Worker.Job(me, handle, func, uid, data); 
+			me.emit("accepted", workjob); 
+			workjob.init(); //initialise the work job
+		}); 
+
+		this._primitive.send("GRAB_JOB_UNIQ", []); //get a job
+	}
+
+	/*
+		=============
+		Worker Job
+		(given from server)
+		=============
+	*/
+	self.Worker.Job = function(Worker, handle, func, uid, data){
+		this.Worker = Worker; 
+		this.handle = handle; 
+		this.uid = uid; 
+
+		this._func = func; 
+		this._data = data; 
+
+		this.started = false; 
+		this.finished = false; 
+	}
+
+	self.Worker.Job.prototype.init = function(){
+		if(this.started){
+			return; 
+		}
+		this.started = true; 
+
+		var work_func = this.Worker._jobs[this._func]; 
+
+		try{
+			work_func.apply(this.Worker, [this._data, this]); 
+		} catch(e){
+			this.exception(e.message); //We have failed
+		}
+	}
+
+	self.Worker.Job.prototype.finish = function(){
+		if(this.finished){
+			return; 
+		}
+		this.finished = true;  
+		this.Worker.work(); 
+	}
+
+	self.Worker.Job.prototype.fail = function(){
+		this.Worker._primitive.send("WORK_FAIL", [this.handle]); 
+		this.finish(); 
+	}
+
+	self.Worker.Job.prototype.exception = function(msg){
+		this.Worker._primitive.send("WORK_EXCEPTION", [this.handle, msg]); 
+		this.finish(); 
+	}
+
+	self.Worker.Job.prototype.warn = function(msg){
+		this.Worker._primitive.send("WORK_WARNING", [this.handle, msg]); 
+	}
+
+	self.Worker.Job.prototype.send = function(data){
+		this.Worker._primitive.send("WORK_DATA", [this.handle, data]); 
+	}
+
+	self.Worker.Job.prototype.status = function(num, denum){
+		this.Worker._primitive.send("WORK_STATUS", [this.handle, 
+			self.Package.intToBEBytes(num), 
+			self.Package.intToBEBytes(denum)
+		]); 
+	}
+
+	self.Worker.Job.prototype.complete = function(data){
+		this.Worker._primitive.send("WORK_COMPLETE", [this.handle, data]); 
+		this.finish(); 
+	}
 
 
+	/*
+		============
+		Shared Client / Worker Code
+		============
+	*/
+
+	/*
+		Shared Initialisation
+	*/
+	self.Client.prototype.initCW = self.Worker.prototype.initCW = function(){
+		var me = this; 
+
+		this._primitive.on("ECHO_RES", function(payload){
+			me.emit("echo", [payload]); 
+		}); 
+
+		this._primitive.on("ERROR", function(code, string){
+			me.emit("error", [code, string]); 
+		}); 
+	}
+
+	/*
+		Sends an echo package. 
+	*/
+	self.Client.prototype.echo = self.Worker.prototype.echo = function(payload, callback){
+		var callback = (typeof callback == "function")?callback:function(){}; 
+
+		this.once("echo", function(pl){
+			callback.call(this, pl == payload); //echk if it suceeded and echoed the payload
+		}); 
+
+		this._primitive.send("ECHO_REQ", [payload]); //send the echo request
+	}
 
 
 	/*
@@ -530,7 +549,7 @@ ClientGear = (function(){
 	self.EventEmitter.prototype.emit = function(evt, args){
 		var me = this; 
 
-		(me._handlers[evt] || []).map(function(h){
+		return (me._handlers[evt] || []).map(function(h){
 			try{
 				h[1].apply(me, args); 
 			} catch(e){
@@ -901,7 +920,7 @@ ClientGear = (function(){
 
 	//static package memebers
 
-	var packetTypes = {
+	var packetTypes = ClientGear.Package.packetTypes = {
 	    "CAN_DO": 1,
 	    "CANT_DO": 2,
 	    "RESET_ABILITIES": 3,
@@ -939,7 +958,7 @@ ClientGear = (function(){
 	    "SUBMIT_JOB_EPOCH": 36
 	};
 
-	var JOBPriorities = {
+	var JOBPriorities = ClientGear.Package.JOBPriorities = {
 		"NORMAL": "SUBMIT_JOB", 
 		"HIGH": "SUBMIT_JOB_HIGH",
 		"LOW": "SUBMIT_JOB_LOW"
