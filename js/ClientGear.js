@@ -182,7 +182,7 @@ ClientGear = (function(){
 		var data = this._data; 
 		var priority = this._priority; 
 
-		priority = JOBPriorities[priority.toUpperCase()]; 
+		priority = self.Package.JOBPriorities[priority.toUpperCase()]; 
 
 		if(typeof priority == "undefined"){
 			return false; 
@@ -240,7 +240,7 @@ ClientGear = (function(){
 		var data = this._data; 
 		var priority = this._priority; 
 
-		priority = JOBPriorities[priority.toUpperCase()]; 
+		priority = self.Package.JOBPriorities[priority.toUpperCase()]; 
 
 		if(typeof priority == "undefined"){
 			return false; 
@@ -931,7 +931,7 @@ ClientGear = (function(){
 
 	//static package memebers
 
-	var packetTypes = ClientGear.Package.packetTypes = {
+	self.Package.packetTypes = {
 	    "CAN_DO": 1,
 	    "CANT_DO": 2,
 	    "RESET_ABILITIES": 3,
@@ -969,7 +969,7 @@ ClientGear = (function(){
 	    "SUBMIT_JOB_EPOCH": 36
 	};
 
-	var JOBPriorities = ClientGear.Package.JOBPriorities = {
+	self.Package.JOBPriorities = {
 		"NORMAL": "SUBMIT_JOB", 
 		"HIGH": "SUBMIT_JOB_HIGH",
 		"LOW": "SUBMIT_JOB_LOW"
@@ -979,15 +979,15 @@ ClientGear = (function(){
 		Converts a Package type string into an integer. 
 	*/
 	self.Package.TypeStringToInt = function(str){
-		return packetTypes[str.toUpperCase()] || NaN; 
+		return self.Package.packetTypes[str.toUpperCase()] || NaN; 
 	}
 
 	/*
 		Converts an Integer representing a package type into a string. 
 	*/
 	self.Package.IntToTypeString = function(intVal){
-		for(var key in packetTypes){
-			if(packetTypes[key] == intVal){
+		for(var key in self.Package.packetTypes){
+			if(self.Package.packetTypes[key] == intVal){
 				return key; 
 			}
 		}
