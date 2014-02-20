@@ -132,7 +132,7 @@ Also inherits all functions from EventEmitter.
 	* `postponeInit` If set to true the worker will not create a connection until the init method is called. 
 
 * Property: `._primitive`: A reference to the ClientGear.primitiveGear associated with this Worker. 
-* Property: `.max_jobs`: Maximum number of jobs to keep working on. 
+* Property: `.jobs_left`: Number of jobs left to work on. 
 
 
 * Function: `.init()`: Initialises the Worker. Should be called only if postponeInit is false. 

@@ -385,9 +385,9 @@ ClientGear = (function(){
 		if(typeof max_jobs == "undefined"){
 			var max_jobs = Infinity; 
 		}
-		this.Worker.max_jobs = max_jobs; 
+		this.jobs_left = max_jobs; 
 
-		if(this.Worker.max_jobs == 0){
+		if(this.jobs_left == 0){
 			//do not work!
 			return; 
 		}
@@ -398,7 +398,7 @@ ClientGear = (function(){
 
 			me._primitive.once("NOOP", function(){
 				me.emit("resume", []); 
-				me.work(this.Worker.max_jobs); 
+				me.work(me.jobs_left); 
 			}); 
 
 			me._primitive.send("PRE_SLEEP", []); 
@@ -452,8 +452,8 @@ ClientGear = (function(){
 			return; 
 		}
 		this.finished = true;  
-		this.Worker.maxCount--; 
-		this.Worker.work(this.Worker.maxCount); 
+		this.Worker.jobs_left--; 
+		this.Worker.work(this.Worker.jobs_left); 
 	}
 
 	self.Worker.Job.prototype.fail = function(){
