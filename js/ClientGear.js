@@ -341,6 +341,7 @@ ClientGear = (function(){
 		this.initCW(); 
 
 		this.setName(this._name); //set this name
+		this.max_jobs = 0; 
 	}
 
 	self.Worker.prototype.setName = function(name){
@@ -380,7 +381,16 @@ ClientGear = (function(){
 		this._primitive.send("RESET_ABILITIES", []); 
 	}
 
-	self.Worker.prototype.work = function(){
+	self.Worker.prototype.work = function(max_jobs){
+		if(typeof max_jobs == "undefined"){
+			var max_jobs = Infinity; 
+		}
+		this.Worker.max_jobs = max_jobs; 
+
+		if(this.Worker.max_jobs == 0){
+			//do not work!
+			return; 
+		}
 		var me = this; 
 		var no_job = this._primitive.once("NO_JOB", function(){
 			me.emit("pause", []); 
@@ -388,7 +398,7 @@ ClientGear = (function(){
 
 			me._primitive.once("NOOP", function(){
 				me.emit("resume", []); 
-				me.work(); 
+				me.work(this.Worker.max_jobs); 
 			}); 
 
 			me._primitive.send("PRE_SLEEP", []); 
@@ -442,7 +452,8 @@ ClientGear = (function(){
 			return; 
 		}
 		this.finished = true;  
-		this.Worker.work(); 
+		this.Worker.maxCount--; 
+		this.Worker.work(this.Worker.maxCount); 
 	}
 
 	self.Worker.Job.prototype.fail = function(){

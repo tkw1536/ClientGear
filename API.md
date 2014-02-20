@@ -132,6 +132,8 @@ Also inherits all functions from EventEmitter.
 	* `postponeInit` If set to true the worker will not create a connection until the init method is called. 
 
 * Property: `._primitive`: A reference to the ClientGear.primitiveGear associated with this Worker. 
+* Property: `.max_jobs`: Maximum number of jobs to keep working on. 
+
 
 * Function: `.init()`: Initialises the Worker. Should be called only if postponeInit is false. 
 * Function: `.initCW()`: Internal. Used to initialise shared worker and client code. 
@@ -153,7 +155,8 @@ Also inherits all functions from EventEmitter.
 * Function: `.deRegisterFunction(func)`: Deregisters a worker function. 
 	* `func` to deregister.
 * Function: `.unRegisterAll()`: Unregisters all worker functions. 
-* Function: `.work()`: Starts working on all jobs. Currently, the only way to stop working is to call `.unRegisterAll()`. 
+* Function: `.work([max_jobs])`: Starts working on all jobs. One way to stop working is to call `.unRegisterAll()`. 
+	* `max_jobs` is the maximum number of jobs to work on. `Infinity` by default. 
 
 * Event : `accepted(job)`: Occurs when a new job is accepted
 	* `job` is an instance of `ClientGear.Worker.Job`
