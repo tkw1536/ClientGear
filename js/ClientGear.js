@@ -697,7 +697,7 @@ ClientGear = (function(){
 
 			if(typeof desc == "string"){
 				//make desc a bin array
-				var oldDesc = desc; 
+				var oldDesc = unescape(encodeURIComponent(desc)); 
 				desc = []; 
 				for(var i=0;i<oldDesc.length;i++){
 					desc.push(oldDesc.charCodeAt(i)); //we encode it here
@@ -788,6 +788,7 @@ ClientGear = (function(){
 					var res_length = self.Package.BEBytesToInt(PACK_LENGTH); //get the remaining length; 
 					bytes(res_length, function(ARGS_BYTES){ //lets get the bytes
 						var argString = String.fromCharCode.apply(String, ARGS_BYTES); 
+						argString = decodeURIComponent(escape(argString)); 
 						if(res_length != 0){
 							decoded.args = argString.split("\0").slice(0); 
 						}
@@ -816,6 +817,9 @@ ClientGear = (function(){
 		var arg_bin = []; 
 
 		for(var i=0;i<args.length;i++){
+			if(typeof args[i] == "string"){
+				args[i] = unescape(encodeURIComponent(args[i])); 
+			}
 			for(var j=0;j<args[i].length;j++){
 				if(typeof args[i] == "string"){
 					arg_bin.push(args[i].charCodeAt(j));
@@ -877,6 +881,7 @@ ClientGear = (function(){
 	}
 
 	self.Package.StringToByteArray = function(str){
+		var str = unescape(encodeURIComponent(str)); 
 		var res=[]; 
 
 		for(var i=0;i<str.length;i++){
@@ -889,6 +894,7 @@ ClientGear = (function(){
 	
 
 	self.Package.StringToByteInt = function(str){
+		var str = unescape(encodeURIComponent(str));
 		var res=0; 
 
 		for(var i=0;i<str.length;i++){
